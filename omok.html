@@ -1,0 +1,1856 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>3D 오목</title>
+<style>
+  /* ===== 기본 색과 화면 설정 ===== */
+  :root {
+    --ink: #2b2118;                    /* 기본 글자색 */
+    --wood: #6e4629;                   /* 강조색 (어두운 나무색) */
+    --wood-light: #8a5a35;
+    --panel: rgba(255, 255, 255, 0.92);
+    --line: rgba(43, 33, 24, 0.14);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 35%, #ffffff 0%, #f6f6f4 60%, #ebebe8 100%); /* 흰색 배경 */
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    color: var(--ink);
+    user-select: none; -webkit-user-select: none;
+  }
+  /* 3D 그림이 그려지는 캔버스 (touch-action: none → 휴대폰에서 화면이 스크롤되지 않게) */
+  #game-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* ===== 화면 위 버튼들 ===== */
+  .top-bar {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+    width: calc(100% - 24px); max-width: 760px;
+    pointer-events: none; /* 빈 곳을 눌러도 3D 화면이 조작되게 */
+  }
+  .top-bar > *, .view-panel > * { pointer-events: auto; }
+  .btn {
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 14px; font-size: 14px; font-family: inherit; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:hover { background: #fff; border-color: rgba(43, 33, 24, 0.35); }
+  .btn.on { background: var(--wood); color: #fff; border-color: var(--wood); }
+  .turn, .chip {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 7px 14px; font-size: 15px; font-weight: bold;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  .chip { font-size: 13px; font-weight: normal; color: rgba(43, 33, 24, 0.7); }
+  .turn-stone { width: 18px; height: 18px; border-radius: 50%; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); }
+
+  /* 시점 버튼 (오른쪽 아래) */
+  .view-panel {
+    position: fixed; right: 14px; bottom: 14px;
+    display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
+    pointer-events: none;
+  }
+  .view-panel .btn { padding: 7px 11px; font-size: 13px; }
+  .hint {
+    position: fixed; bottom: 20px; left: 16px;
+    font-size: 13px; color: rgba(43, 33, 24, 0.5); pointer-events: none;
+  }
+
+  /* 잠깐 떴다 사라지는 알림 (금수 안내 등) */
+  .toast {
+    position: fixed; top: 70px; left: 50%; transform: translate(-50%, -10px);
+    background: rgba(40, 24, 14, 0.92); color: #fff; padding: 10px 18px; border-radius: 999px;
+    font-size: 14px; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 30;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ===== 메인 화면 (시작 메뉴) ===== */
+  .menu {
+    position: fixed; inset: 0; z-index: 15;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(4px);
+  }
+  .menu.hidden { display: none; }
+  .menu-box {
+    background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    padding: 24px 24px 18px; width: min(410px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px); overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+  }
+  .menu-title { font-size: 32px; font-weight: 900; text-align: center; color: var(--wood); letter-spacing: 2px; }
+  .menu-subtitle { text-align: center; font-size: 13px; color: rgba(43, 33, 24, 0.55); margin: 2px 0 18px; }
+  .menu-row { margin-bottom: 14px; }
+  .menu-label { display: block; font-size: 13px; color: rgba(43, 33, 24, 0.65); margin-bottom: 6px; }
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; padding: 9px 4px; font-size: 14px; font-family: inherit; cursor: pointer;
+    background: #f4f1ec; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .seg button.on { background: var(--wood); color: #fff; border-color: var(--wood); font-weight: bold; }
+  .hidden-row { display: none; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+    box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+  .swatch.on { outline: 3px solid var(--wood); outline-offset: 2px; }
+  .btn-primary {
+    width: 100%; margin-top: 4px; padding: 13px; font-size: 17px; font-weight: bold;
+    background: var(--wood); color: #fff; border-color: var(--wood);
+  }
+  .btn-primary:hover { background: var(--wood-light); border-color: var(--wood-light); }
+  .records {
+    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size: 13px; line-height: 1.7; color: rgba(43, 33, 24, 0.75);
+  }
+  .records b { color: var(--ink); }
+  .link-btn {
+    background: none; border: none; color: rgba(43, 33, 24, 0.5); font-size: 12px;
+    font-family: inherit; text-decoration: underline; cursor: pointer; margin-top: 4px;
+  }
+
+  /* ===== 화려한 결과 화면 ===== */
+  .result {
+    position: fixed; inset: 0; z-index: 20; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at center, rgba(40, 24, 10, 0.55), rgba(12, 6, 2, 0.85));
+    animation: fade-in 0.4s ease both;
+  }
+  .result.hidden { display: none; }
+  #confetti { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .rays {
+    position: absolute; width: min(150vmin, 1200px); aspect-ratio: 1; border-radius: 50%;
+    background: repeating-conic-gradient(from 0deg, rgba(255, 214, 120, 0.3) 0deg 7deg, transparent 7deg 18deg);
+    -webkit-mask: radial-gradient(circle, #000 15%, transparent 62%);
+    mask: radial-gradient(circle, #000 15%, transparent 62%);
+    animation: spin 20s linear infinite; pointer-events: none;
+  }
+  .result-title {
+    position: relative; font-size: clamp(60px, 15vw, 140px); font-weight: 900; letter-spacing: 6px;
+    background: linear-gradient(180deg, #fff8d6 0%, #ffd34d 45%, #e2861c 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 22px rgba(255, 190, 60, 0.85)) drop-shadow(0 6px 0 rgba(110, 55, 0, 0.7));
+    animation: pop 0.9s cubic-bezier(.2, 1.6, .4, 1) both, pulse 1.6s ease-in-out 0.9s infinite;
+  }
+  .result.lose .result-title {
+    background: linear-gradient(180deg, #f1f4f8 0%, #a5b2c4 55%, #5b6a80 100%);
+    -webkit-background-clip: text; background-clip: text;
+    filter: drop-shadow(0 0 16px rgba(150, 170, 200, 0.6)) drop-shadow(0 6px 0 rgba(30, 40, 60, 0.7));
+  }
+  .result.lose .rays { display: none; }
+  .result-sub { position: relative; color: #fff; font-size: 19px; margin-top: 6px; text-align: center; padding: 0 16px; animation: rise 0.6s 0.5s both; }
+  .result-record { position: relative; color: rgba(255, 255, 255, 0.75); font-size: 14px; margin-top: 6px; animation: rise 0.6s 0.6s both; }
+  .result-buttons { position: relative; display: flex; gap: 10px; margin-top: 28px; flex-wrap: wrap; justify-content: center; animation: rise 0.6s 0.8s both; }
+  .result-buttons .btn { padding: 11px 20px; font-size: 15px; }
+  .result-buttons .btn-main { background: #ffd34d; border-color: #ffd34d; color: #3a2405; font-weight: bold; }
+  .result-count { position: relative; color: rgba(255, 255, 255, 0.6); font-size: 13px; margin-top: 16px; animation: rise 0.6s 1s both; }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pop {
+    0% { transform: scale(0.2) rotate(-10deg); opacity: 0; }
+    60% { transform: scale(1.15) rotate(2deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); }
+  }
+  @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== 휴대폰처럼 좁은 화면 ===== */
+  @media (max-width: 560px) {
+    .top-bar { top: 8px; gap: 6px; }
+    .btn { padding: 7px 10px; font-size: 13px; }
+    .turn { padding: 6px 10px; font-size: 14px; }
+    .chip { display: none; }
+    .view-panel { left: 8px; right: 8px; bottom: 8px; justify-content: center; }
+    .hint { left: 0; right: 0; bottom: 52px; text-align: center; font-size: 12px; }
+    .menu-box { padding: 20px 16px 14px; }
+  }
+</style>
+
+<!-- Three.js를 CDN에서 불러오기 위한 주소 설정 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<div class="top-bar">
+  <div class="turn"><span class="turn-stone" id="turn-stone"></span><span id="turn-text">흑 차례</span></div>
+  <div class="chip" id="info-chip">렌주룰 · 15줄</div>
+  <button class="btn" id="btn-undo">무르기</button>
+  <button class="btn" id="btn-home">메인 화면</button>
+  <button class="btn" id="btn-sound">🔊 소리</button>
+</div>
+
+<div class="view-panel">
+  <button class="btn" data-view="normal">기본 시점</button>
+  <button class="btn" data-view="top">위에서</button>
+  <button class="btn" data-view="low">옆에서</button>
+  <button class="btn" id="btn-auto-rotate">⟳ 자동 회전</button>
+</div>
+<div class="hint" id="hint">클릭: 돌 놓기 · 드래그: 회전 · 휠: 확대·축소</div>
+<div class="toast" id="toast"></div>
+
+<!-- 결과 화면 -->
+<div class="result hidden" id="result">
+  <canvas id="confetti"></canvas>
+  <div class="rays"></div>
+  <div class="result-title" id="result-title">승리!</div>
+  <div class="result-sub" id="result-sub"></div>
+  <div class="result-record" id="result-record"></div>
+  <div class="result-buttons">
+    <button class="btn btn-main" id="btn-result-home">메인 화면</button>
+    <button class="btn" id="btn-result-again">바로 다시 하기</button>
+    <button class="btn" id="btn-result-view">판 보기</button>
+  </div>
+  <div class="result-count" id="result-count"></div>
+</div>
+
+<!-- 메인 화면 -->
+<div class="menu" id="menu">
+  <div class="menu-box">
+    <div class="menu-title">3D 오목</div>
+    <div class="menu-subtitle">같은 색 돌 다섯 개를 먼저 이으면 승리!</div>
+
+    <div class="menu-row">
+      <span class="menu-label">게임 방식</span>
+      <div class="seg" data-group="mode">
+        <button data-value="ai" class="on">AI 대전</button>
+        <button data-value="pvp">2인 대전</button>
+      </div>
+    </div>
+    <div class="menu-row ai-only">
+      <span class="menu-label">AI 실력</span>
+      <div class="seg" data-group="level">
+        <button data-value="easy">쉬움</button>
+        <button data-value="normal" class="on">보통</button>
+        <button data-value="hard">어려움</button>
+      </div>
+    </div>
+    <div class="menu-row ai-only">
+      <span class="menu-label">내 돌</span>
+      <div class="seg" data-group="color">
+        <button data-value="1" class="on">흑 (먼저 두기)</button>
+        <button data-value="2">백 (나중에 두기)</button>
+      </div>
+    </div>
+    <div class="menu-row">
+      <span class="menu-label">판 크기</span>
+      <div class="seg" data-group="size">
+        <button data-value="13">13 × 13</button>
+        <button data-value="15" class="on">15 × 15</button>
+        <button data-value="19">19 × 19</button>
+      </div>
+    </div>
+    <div class="menu-row">
+      <span class="menu-label">규칙</span>
+      <div class="seg" data-group="rule">
+        <button data-value="renju" class="on">렌주룰 (공식)</button>
+        <button data-value="free">자유룰</button>
+      </div>
+    </div>
+    <div class="menu-row">
+      <span class="menu-label">흑 (먼저 두는 쪽) 돌 색</span>
+      <div class="swatches" data-player="1"></div>
+    </div>
+    <div class="menu-row">
+      <span class="menu-label">백 (나중에 두는 쪽) 돌 색</span>
+      <div class="swatches" data-player="2"></div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-start">게임 시작</button>
+    <div class="records" id="records"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ============================================================
+// 1. 설정값 (숫자를 바꾸면 게임 모양이 바뀝니다)
+// ============================================================
+// 고를 수 있는 판 크기와 화점(판 위의 점) 위치
+const BOARD_OPTIONS = {
+  13: [[3, 3], [3, 9], [9, 3], [9, 9], [6, 6]],
+  15: [[3, 3], [3, 11], [11, 3], [11, 11], [7, 7]],
+  19: [[3, 3], [3, 9], [3, 15], [9, 3], [9, 9], [9, 15], [15, 3], [15, 9], [15, 15]],
+};
+const CELL_SIZE = 1;            // 줄 사이 간격
+const BOARD_MARGIN = 0.8;       // 바깥 줄과 판 끝 사이 여백
+const BOARD_THICKNESS = 0.8;    // 판 두께
+const LEG_HEIGHT = 0.6;         // 판 다리 높이
+const FLOOR_Y = -BOARD_THICKNESS - LEG_HEIGHT; // 바닥 높이
+const MANNEQUIN_SCALE = 1.3;    // 인형 크기
+const MANNEQUIN_GAP = 3.6;      // 판 가장자리에서 인형까지 거리
+const AUTO_HOME_SECONDS = 7;    // 결과 화면 후 메인 화면으로 돌아가기까지 시간
+// 고를 수 있는 돌 색
+const STONE_COLORS = ['#17181c', '#f3f1ea', '#c8342b', '#2f6fd6', '#2e9a5a', '#f0c02c', '#8a4fc0', '#f28db5'];
+
+// 판 크기에 따라 바뀌는 값들
+let boardSize, gridSpan, boardWidth, halfSpan;
+function setBoardMetrics(size) {
+  boardSize = size;
+  gridSpan = (size - 1) * CELL_SIZE;           // 첫 줄~끝 줄 거리
+  boardWidth = gridSpan + BOARD_MARGIN * 2;    // 판 전체 너비
+  halfSpan = gridSpan / 2;                     // 판 중심 기준 절반
+}
+setBoardMetrics(15);
+
+// ============================================================
+// 2. 기본 3D 장면 만들기
+// ============================================================
+const canvas = document.getElementById('game-canvas');
+
+// 렌더러: 3D 장면을 화면에 그려주는 도구 (alpha: 배경을 투명하게 해서 흰 배경이 보이게)
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 너무 높으면 느려져서 최대 2배
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;           // 부드러운 그림자
+renderer.toneMapping = THREE.ACESFilmicToneMapping;          // 영화 같은 색감
+
+const scene = new THREE.Scene();
+// 주변 환경 반사 (돌과 판에 은은한 빛 반사가 생깁니다)
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// 카메라: 장면을 바라보는 눈
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 300);
+
+// 카메라 조작: 드래그로 회전, 휠로 확대·축소
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;          // 부드럽게 멈추기
+controls.dampingFactor = 0.08;
+controls.enablePan = false;             // 판이 화면 밖으로 밀려나지 않게 이동은 끔
+controls.minDistance = 8;
+controls.minPolarAngle = 0;             // 바로 위에서 내려다보기까지
+controls.maxPolarAngle = Math.PI * 0.49; // 거의 옆에서 보기까지 (판 아래로는 안 내려감)
+controls.autoRotateSpeed = 1.2;
+controls.target.set(0, 0, 0);
+
+// ============================================================
+// 3. 조명
+// ============================================================
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d4cc, 0.7));
+const sunLight = new THREE.DirectionalLight(0xfff4e6, 2.2);
+sunLight.position.set(8, 22, 10);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+Object.assign(sunLight.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 70 });
+sunLight.shadow.bias = -0.0005;
+sunLight.shadow.normalBias = 0.02;
+scene.add(sunLight);
+
+// 바닥 (그림자만 보이는 투명한 바닥)
+const ground = new THREE.Mesh(new THREE.CircleGeometry(80, 64), new THREE.ShadowMaterial({ opacity: 0.18 }));
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = FLOOR_Y;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ============================================================
+// 4. 오목판 만들기 (어두운 나무색)
+// ============================================================
+// 나무 무늬를 코드로 그리기 (이미지 파일 없이)
+function createWoodCanvas(size, withGrid) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const ctx = cv.getContext('2d');
+
+  // 어두운 호두나무 바탕색
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, '#70462a');
+  base.addColorStop(1, '#4e2f1a');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  // 물결 모양 나뭇결 (어두운 결 + 밝은 결)
+  for (let i = 0; i < 280; i++) {
+    const y = Math.random() * size;
+    const amp = 3 + Math.random() * 14;
+    const freq = 0.0015 + Math.random() * 0.004;
+    const phase = Math.random() * Math.PI * 2;
+    const light = Math.random() < 0.25;
+    ctx.strokeStyle = light
+      ? `rgba(160, 110, 70, ${0.05 + Math.random() * 0.08})`
+      : `rgba(${30 + Math.random() * 25 | 0}, ${16 + Math.random() * 12 | 0}, 6, ${0.08 + Math.random() * 0.2})`;
+    ctx.lineWidth = 1 + Math.random() * 3;
+    ctx.beginPath();
+    for (let x = 0; x <= size; x += 16) {
+      const yy = y + Math.sin(x * freq + phase) * amp;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+
+  // 판 윗면이면 줄과 화점 그리기 (어두운 판에서 잘 보이게 밝은 금색 줄)
+  if (withGrid) {
+    const ppu = size / boardWidth; // 1칸당 픽셀 수
+    const start = BOARD_MARGIN * ppu;
+    const end = (BOARD_MARGIN + gridSpan) * ppu;
+    ctx.strokeStyle = 'rgba(236, 206, 150, 0.82)';
+    for (let i = 0; i < boardSize; i++) {
+      const p = (BOARD_MARGIN + i * CELL_SIZE) * ppu;
+      ctx.lineWidth = (i === 0 || i === boardSize - 1) ? ppu * 0.06 : ppu * 0.035;
+      ctx.beginPath(); ctx.moveTo(start, p); ctx.lineTo(end, p); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p, start); ctx.lineTo(p, end); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(236, 206, 150, 0.95)';
+    for (const [row, col] of BOARD_OPTIONS[boardSize]) {
+      ctx.beginPath();
+      ctx.arc((BOARD_MARGIN + col) * ppu, (BOARD_MARGIN + row) * ppu, ppu * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  return cv;
+}
+
+function makeTexture(cv) {
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); // 비스듬히 봐도 선명하게
+  return tex;
+}
+
+const sideMaterial = new THREE.MeshStandardMaterial({
+  map: makeTexture(createWoodCanvas(512, false)), roughness: 0.55, envMapIntensity: 0.5,
+});
+const legMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2213, roughness: 0.6 });
+let boardGroup = null;
+
+// 판 크기가 바뀔 때마다 판을 새로 만듦
+function buildBoard() {
+  if (boardGroup) {
+    scene.remove(boardGroup);
+    boardGroup.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.userData.ownMaterial) { obj.material[2].map.dispose(); obj.material[2].dispose(); }
+    });
+  }
+  boardGroup = new THREE.Group();
+
+  const topMaterial = new THREE.MeshStandardMaterial({
+    map: makeTexture(createWoodCanvas(2048, true)), roughness: 0.42, envMapIntensity: 0.7,
+  });
+  // 상자 모양 판 (윗면에만 줄이 그려진 무늬를 붙임)
+  const boardMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(boardWidth, BOARD_THICKNESS, boardWidth),
+    [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial]
+  );
+  boardMesh.userData.ownMaterial = true;
+  boardMesh.position.y = -BOARD_THICKNESS / 2; // 판 윗면이 높이 0에 오도록
+  boardMesh.castShadow = true;
+  boardMesh.receiveShadow = true;
+  boardGroup.add(boardMesh);
+
+  // 판 다리 4개
+  const legOffset = boardWidth / 2 - 1.4;
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.45, LEG_HEIGHT, 24), legMaterial);
+    leg.position.set(sx * legOffset, -BOARD_THICKNESS - LEG_HEIGHT / 2, sz * legOffset);
+    leg.castShadow = true;
+    boardGroup.add(leg);
+  }
+  scene.add(boardGroup);
+}
+
+// ============================================================
+// 5. 양쪽에 앉아 있는 마네킹 인형
+// ============================================================
+const mannequinWood = new THREE.MeshStandardMaterial({ color: 0xdcbf94, roughness: 0.5 });
+const mannequinJoint = new THREE.MeshStandardMaterial({ color: 0xa47b4f, roughness: 0.45 });
+
+function capsule(radius, length, material) {
+  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 8, 16), material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+function ball(radius, material) {
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 16), material);
+  mesh.castShadow = true;
+  return mesh;
+}
+// 두 점 a → b 를 잇는 팔다리 만들기
+function limbBetween(a, b, radius, material) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const mesh = capsule(radius, Math.max(0.01, dir.length() - radius * 2), material);
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  return mesh;
+}
+
+// 책상다리로 앉은 인형 하나 만들기 (앞쪽 = +z 방향)
+function createMannequin() {
+  const root = new THREE.Group();
+
+  // 방석 (돌 색과 같은 색)
+  const cushionMaterial = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.85 });
+  const cushion = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.35, 3.9), cushionMaterial);
+  cushion.position.y = 0.175;
+  cushion.castShadow = cushion.receiveShadow = true;
+  root.add(cushion);
+
+  const body = new THREE.Group();
+  body.position.y = 0.35; // 방석 위
+  root.add(body);
+
+  // 골반
+  const hips = ball(1, mannequinWood);
+  hips.scale.set(1.3, 0.7, 1.0);
+  hips.position.y = 0.7;
+  body.add(hips);
+
+  // 다리 (허벅지는 앞쪽 바깥으로, 정강이는 안쪽으로 엇갈리게)
+  for (const s of [-1, 1]) {
+    const hip = new THREE.Vector3(s * 0.6, 0.5, 0.1);
+    const knee = new THREE.Vector3(s * 1.9, 0.45, 1.9);
+    const ankle = new THREE.Vector3(-s * 0.55, s > 0 ? 0.42 : 0.68, 1.15);
+    body.add(limbBetween(hip, knee, 0.42, mannequinWood));
+    const kneeBall = ball(0.4, mannequinJoint);
+    kneeBall.position.copy(knee);
+    body.add(kneeBall);
+    body.add(limbBetween(knee, ankle, 0.36, mannequinWood));
+    const foot = ball(0.32, mannequinJoint);
+    foot.position.copy(ankle);
+    body.add(foot);
+  }
+
+  // 상체 (앞으로 기울일 수 있게 골반 위에 회전축을 둠)
+  const torso = new THREE.Group();
+  torso.position.y = 1.0;
+  body.add(torso);
+  const belly = capsule(0.75, 0.6, mannequinWood);
+  belly.position.y = 0.6;
+  torso.add(belly);
+  const chest = capsule(0.95, 0.9, mannequinWood);
+  chest.scale.set(1.15, 1, 0.8);
+  chest.position.y = 1.9;
+  torso.add(chest);
+  const neck = capsule(0.25, 0.4, mannequinJoint);
+  neck.position.y = 3.05;
+  torso.add(neck);
+  const head = ball(0.8, mannequinWood);
+  head.scale.set(0.92, 1.12, 0.98);
+  head.position.y = 3.9;
+  torso.add(head);
+
+  // 팔 (어깨 → 팔꿈치 → 손)
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(s * 1.3, 2.5, 0);
+    shoulder.rotation.z = s * 0.12;
+    torso.add(shoulder);
+    shoulder.add(ball(0.36, mannequinJoint));
+    const upper = capsule(0.28, 1.2, mannequinWood);
+    upper.position.y = -0.9;
+    shoulder.add(upper);
+    const elbow = new THREE.Group();
+    elbow.position.y = -1.75;
+    shoulder.add(elbow);
+    elbow.add(ball(0.3, mannequinJoint));
+    const fore = capsule(0.25, 1.1, mannequinWood);
+    fore.rotation.x = Math.PI / 2;
+    fore.position.z = 0.8;
+    elbow.add(fore);
+    const hand = ball(0.3, mannequinWood);
+    hand.position.z = 1.6;
+    elbow.add(hand);
+    arms.push({ shoulder, elbow });
+  }
+
+  root.scale.setScalar(MANNEQUIN_SCALE);
+  scene.add(root);
+  return { root, torso, head, arms, cushionMaterial, lean: 0.05, reachStart: -10, phase: Math.random() * 6 };
+}
+
+// 흑은 왼쪽, 백은 오른쪽에 앉음
+const mannequins = { 1: createMannequin(), 2: createMannequin() };
+function placeMannequins() {
+  const x = boardWidth / 2 + MANNEQUIN_GAP;
+  mannequins[1].root.position.set(-x, FLOOR_Y, 0);
+  mannequins[1].root.rotation.y = Math.PI / 2;   // 판 쪽(+x)을 바라보게
+  mannequins[2].root.position.set(x, FLOOR_Y, 0);
+  mannequins[2].root.rotation.y = -Math.PI / 2;  // 판 쪽(-x)을 바라보게
+}
+
+const lerp = (a, b, t) => a + (b - a) * t;
+// 인형 움직임: 숨쉬기, 자기 차례면 앞으로 기울기, 돌 둘 때 팔 뻗기, 이기면 만세
+function updateMannequins(time) {
+  for (const p of [1, 2]) {
+    const m = mannequins[p];
+    const isWinner = gameOver && winnerPlayer === p;
+    const isLoser = gameOver && winnerPlayer && winnerPlayer !== p;
+    const targetLean = isLoser ? 0.45 : isWinner ? -0.05 : (!gameOver && currentPlayer === p ? 0.22 : 0.05);
+    m.lean = lerp(m.lean, targetLean, 0.06);
+    m.torso.rotation.x = m.lean;
+    m.torso.scale.y = 1 + 0.012 * Math.sin(time * 2 + m.phase); // 숨쉬기
+    m.head.rotation.x = isLoser ? 0.4 : 0;                       // 지면 고개 숙이기
+
+    for (let i = 0; i < 2; i++) {
+      const { shoulder, elbow } = m.arms[i];
+      let sx = -0.25, ex = 0.6; // 손을 무릎 위에 둔 기본 자세
+      if (isWinner) {
+        // 만세! 양팔을 위로 흔들기
+        sx = -2.8 + 0.15 * Math.sin(time * 6 + i * Math.PI);
+        ex = 0.2;
+      } else if (i === 1) {
+        // 돌을 둘 때 한쪽 팔을 판 쪽으로 뻗기
+        const t = (time - m.reachStart) / 0.7;
+        if (t >= 0 && t <= 1) {
+          const k = Math.sin(t * Math.PI);
+          sx = lerp(-0.25, -1.15, k);
+          ex = lerp(0.6, 0.25, k);
+        }
+      }
+      shoulder.rotation.x = lerp(shoulder.rotation.x, sx, 0.25);
+      elbow.rotation.x = lerp(elbow.rotation.x, ex, 0.25);
+    }
+  }
+}
+
+// ============================================================
+// 6. 돌 만들기
+// ============================================================
+const EMPTY = 0, BLACK = 1, WHITE = 2;
+const PLAYER_NAMES = { [BLACK]: '흑', [WHITE]: '백' };
+const STONE_RADIUS = 0.46;
+const STONE_FLATNESS = 0.42;                                   // 돌을 납작하게 (1이면 공 모양)
+const STONE_HALF_HEIGHT = STONE_RADIUS * STONE_FLATNESS;       // 돌 높이의 절반
+
+const stoneGeometry = new THREE.SphereGeometry(STONE_RADIUS, 40, 24);
+const stoneMaterials = {
+  [BLACK]: new THREE.MeshPhysicalMaterial({ roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15 }),
+  [WHITE]: new THREE.MeshPhysicalMaterial({ roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.2 }),
+};
+// 미리보기용 반투명 재질
+const previewMaterials = {};
+for (const p of [BLACK, WHITE]) {
+  previewMaterials[p] = stoneMaterials[p].clone();
+  previewMaterials[p].transparent = true;
+  previewMaterials[p].depthWrite = false;
+}
+let stoneColors = { [BLACK]: STONE_COLORS[0], [WHITE]: STONE_COLORS[1] };
+
+// 고른 색을 돌·방석·차례 표시에 적용
+function applyStoneColors() {
+  for (const p of [BLACK, WHITE]) {
+    stoneMaterials[p].color.set(stoneColors[p]);
+    previewMaterials[p].color.set(stoneColors[p]);
+    mannequins[p].cushionMaterial.color.set(stoneColors[p]);
+  }
+}
+
+function createStoneMesh(material) {
+  const mesh = new THREE.Mesh(stoneGeometry, material);
+  mesh.scale.y = STONE_FLATNESS;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// 칸 번호(행, 열) → 3D 좌표
+function cellToWorld(row, col) {
+  return { x: col * CELL_SIZE - halfSpan, z: row * CELL_SIZE - halfSpan };
+}
+
+const previewStone = createStoneMesh(previewMaterials[BLACK]);
+previewStone.castShadow = false;
+previewStone.visible = false;
+scene.add(previewStone);
+
+// 마지막에 둔 돌 위의 빨간 점
+const lastMarker = new THREE.Mesh(new THREE.CircleGeometry(0.09, 24), new THREE.MeshBasicMaterial({ color: 0xff3d2e }));
+lastMarker.rotation.x = -Math.PI / 2;
+lastMarker.visible = false;
+scene.add(lastMarker);
+
+// 금수(흑이 둘 수 없는 자리) 표시용 빨간 X
+const forbidMaterial = new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.9 });
+const forbidGeometry = new THREE.BoxGeometry(0.5, 0.02, 0.08);
+const forbidMarkers = [];
+function getForbidMarker(index) {
+  if (!forbidMarkers[index]) {
+    const group = new THREE.Group();
+    const a = new THREE.Mesh(forbidGeometry, forbidMaterial);
+    a.rotation.y = Math.PI / 4;
+    const b = new THREE.Mesh(forbidGeometry, forbidMaterial);
+    b.rotation.y = -Math.PI / 4;
+    group.add(a, b);
+    scene.add(group);
+    forbidMarkers[index] = group;
+  }
+  return forbidMarkers[index];
+}
+
+// ============================================================
+// 7. 애니메이션 (돌 떨어지기, 승리 반짝임, 카메라 이동)
+// ============================================================
+const clock = new THREE.Clock();
+const DROP_HEIGHT = 2.6;        // 돌이 떨어지기 시작하는 높이
+const DROP_DURATION = 0.42;     // 떨어지는 시간 (초)
+const WIN_MESSAGE_DELAY = 1300; // 이긴 돌이 빛나는 것을 보여준 뒤 결과 화면 띄우기 (밀리초)
+const dropAnimations = [];
+let glowingStones = [];
+let winMessageTimer = null;
+
+// 떨어지는 높이 비율 (0~70%: 떨어짐, 70~100%: 살짝 튕김)
+function dropCurve(t) {
+  if (t < 0.7) { const k = t / 0.7; return 1 - k * k; }
+  return 0.07 * Math.sin(((t - 0.7) / 0.3) * Math.PI);
+}
+function startDrop(mesh, onLand) {
+  mesh.position.y = STONE_HALF_HEIGHT + DROP_HEIGHT;
+  dropAnimations.push({ mesh, start: clock.getElapsedTime(), landed: false, onLand });
+}
+function updateDrops(time) {
+  for (let i = dropAnimations.length - 1; i >= 0; i--) {
+    const anim = dropAnimations[i];
+    const t = Math.min((time - anim.start) / DROP_DURATION, 1);
+    anim.mesh.position.y = STONE_HALF_HEIGHT + DROP_HEIGHT * dropCurve(t);
+    if (!anim.landed && t >= 0.7) { anim.landed = true; anim.onLand?.(); } // 판에 닿는 순간
+    if (t >= 1) dropAnimations.splice(i, 1);
+  }
+}
+
+// 이긴 돌 반짝이게 하기
+function startWinGlow(cells) {
+  glowingStones = cells.map(({ row, col }) => {
+    const mesh = stoneMeshes.get(cellKey(row, col));
+    const original = mesh.material;
+    mesh.material = original.clone();
+    mesh.material.emissive = new THREE.Color(0xffc24a);
+    return { mesh, original };
+  });
+}
+function clearWinGlow() {
+  for (const { mesh, original } of glowingStones) { mesh.material.dispose(); mesh.material = original; }
+  glowingStones = [];
+  clearTimeout(winMessageTimer);
+}
+function updateGlow(time) {
+  glowingStones.forEach(({ mesh }, i) => {
+    mesh.material.emissiveIntensity = 0.55 + 0.45 * Math.sin(time * 5 - i * 0.6); // 물결처럼 번갈아 반짝
+  });
+}
+
+// 빨간 점이 마지막 돌 위를 따라다니게
+function updateLastMarker() {
+  const last = moves[moves.length - 1];
+  const mesh = last && stoneMeshes.get(cellKey(last.row, last.col));
+  lastMarker.visible = !!mesh;
+  if (mesh) lastMarker.position.set(mesh.position.x, mesh.position.y + STONE_HALF_HEIGHT + 0.01, mesh.position.z);
+}
+
+// ----- 카메라 -----
+// 시점별 카메라 방향
+const VIEW_DIRECTIONS = {
+  normal: new THREE.Vector3(0, 0.78, 0.62).normalize(), // 비스듬히
+  top: new THREE.Vector3(0, 1, 0.02).normalize(),       // 바로 위
+  low: new THREE.Vector3(0, 0.22, 1).normalize(),       // 거의 옆
+};
+// 화면 비율에 맞춰 판(가로 화면이면 인형까지) 전체가 보이는 거리 계산
+function fitDistance() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
+  const halfH = Math.atan(Math.tan(halfV) * aspect);
+  const needX = aspect >= 1 ? boardWidth / 2 + MANNEQUIN_GAP + 3 : (boardWidth / 2) * 1.2;
+  const needY = (boardWidth / 2) * 1.15;
+  const distance = Math.max(20, needX / Math.tan(halfH), needY / Math.tan(halfV));
+  controls.maxDistance = distance * 1.8;
+  return distance;
+}
+// 카메라를 부드럽게 다른 시점으로 옮기기
+let cameraTween = null;
+function moveCameraTo(viewName) {
+  cameraTween = {
+    fromDir: camera.position.clone().normalize(),
+    fromDist: camera.position.length(),
+    toDir: VIEW_DIRECTIONS[viewName],
+    toDist: fitDistance(),
+    start: clock.getElapsedTime(),
+  };
+  controls.enabled = false;
+}
+function updateCameraTween(time) {
+  if (!cameraTween) return;
+  const t = Math.min((time - cameraTween.start) / 0.8, 1);
+  const k = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // 천천히 출발 → 천천히 도착
+  const dir = cameraTween.fromDir.clone().lerp(cameraTween.toDir, k).normalize();
+  camera.position.copy(dir.multiplyScalar(lerp(cameraTween.fromDist, cameraTween.toDist, k)));
+  if (t >= 1) { cameraTween = null; controls.enabled = true; }
+}
+function resetCamera() {
+  camera.position.copy(VIEW_DIRECTIONS.normal).multiplyScalar(fitDistance());
+  controls.update();
+}
+
+// ============================================================
+// 8. 게임 상태
+// ============================================================
+let board = [];              // board[행][열] = EMPTY / BLACK / WHITE
+let moves = [];              // 둔 순서 기록: { row, col, player }
+let currentPlayer = BLACK;   // 지금 둘 차례
+let gameOver = false;
+let winnerPlayer = null;     // 이긴 쪽 (무승부·진행 중이면 null)
+const stoneMeshes = new Map(); // 칸 번호 → 돌 3D 물체
+
+let gameMode = 'ai';         // 'ai' = AI 대전, 'pvp' = 2인 대전
+let aiLevel = 'normal';      // 'easy' / 'normal' / 'hard'
+let humanColor = BLACK;      // AI 대전에서 내 돌 색
+let gameRule = 'renju';      // 'renju' = 렌주룰, 'free' = 자유룰
+let aiThinking = false;
+let aiRequestId = 0;         // 오래된 AI 답을 무시하기 위한 번호
+const AI_MIN_THINK_MS = 450; // AI가 너무 빨리 두면 어색해서 최소 대기 시간
+
+const cellKey = (row, col) => row * boardSize + col;
+const isInside = (row, col) => row >= 0 && row < boardSize && col >= 0 && col < boardSize;
+
+// ============================================================
+// 9. AI와 규칙 계산 (웹 워커에서도 똑같이 쓰는 코드)
+// ============================================================
+// 이 함수 전체가 웹 워커(뒤에서 따로 계산하는 일꾼) 안에서도 실행됩니다.
+// 그래서 바깥 변수를 쓰지 않고 필요한 것을 모두 안에 담았습니다.
+function createAiEngine() {
+  let N = 15;            // 판 크기 (계산할 때마다 판을 보고 정함)
+  let RULE = 'renju';
+  const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  const WIN_SCORE = 10000000;
+  const inside = (r, c) => r >= 0 && r < N && c >= 0 && c < N;
+
+  // ----- 렌주룰 판정 -----
+  // (r, c)를 지나는 같은 색 돌이 앞뒤로 몇 개씩 이어졌는지
+  function runSpan(board, r, c, dr, dc, p) {
+    let back = 0, fwd = 0;
+    while (inside(r - dr * (back + 1), c - dc * (back + 1)) && board[r - dr * (back + 1)][c - dc * (back + 1)] === p) back++;
+    while (inside(r + dr * (fwd + 1), c + dc * (fwd + 1)) && board[r + dr * (fwd + 1)][c + dc * (fwd + 1)] === p) fwd++;
+    return { back, fwd, len: back + fwd + 1 };
+  }
+  const exactFiveAt = (board, r, c, p) => DIRS.some(([dr, dc]) => runSpan(board, r, c, dr, dc, p).len === 5);
+  const overlineAt = (board, r, c, p) => DIRS.some(([dr, dc]) => runSpan(board, r, c, dr, dc, p).len >= 6);
+
+  // 이 수로 이겼는지 (렌주룰의 흑은 정확히 5개여야 함, 6개 이상은 인정 안 됨)
+  function makesFive(board, r, c, p) {
+    if (RULE === 'renju' && p === 1) return exactFiveAt(board, r, c, p);
+    return DIRS.some(([dr, dc]) => runSpan(board, r, c, dr, dc, p).len >= 5);
+  }
+
+  // 한 방향에서 흑이 한 수만 더 두면 정확히 5목이 되는 빈칸 개수 (= "4"가 있는지)
+  function fiveCompletions(board, r, c, dr, dc) {
+    let count = 0;
+    for (let k = -4; k <= 4; k++) {
+      if (k === 0) continue;
+      const rr = r + dr * k, cc = c + dc * k;
+      if (!inside(rr, cc) || board[rr][cc] !== 0) continue;
+      board[rr][cc] = 1;
+      const span = runSpan(board, rr, cc, dr, dc, 1);
+      if (span.len === 5 && k - span.back <= 0 && 0 <= k + span.fwd) count++;
+      board[rr][cc] = 0;
+    }
+    return count;
+  }
+  function fourCount(board, r, c) {
+    let total = 0;
+    for (const [dr, dc] of DIRS) {
+      const n = fiveCompletions(board, r, c, dr, dc);
+      if (n === 0) continue;
+      // 한 줄 안에 4가 두 개 (예: ●○●●●○●) 인 경우도 4-4
+      total += (n >= 2 && runSpan(board, r, c, dr, dc, 1).len !== 4) ? 2 : 1;
+    }
+    return total;
+  }
+  // 한 방향이 "열린 3"인지: 한 수 더 두면 양쪽이 열린 4(막을 수 없는 4)가 되는가
+  function isOpenThreeDir(board, r, c, dr, dc) {
+    for (let k = -4; k <= 4; k++) {
+      if (k === 0) continue;
+      const rr = r + dr * k, cc = c + dc * k;
+      if (!inside(rr, cc) || board[rr][cc] !== 0) continue;
+      board[rr][cc] = 1;
+      let open = false;
+      const span = runSpan(board, r, c, dr, dc, 1);
+      if (span.len === 4 && k >= -span.back && k <= span.fwd) {
+        const r1 = r - dr * (span.back + 1), c1 = c - dc * (span.back + 1);
+        const r2 = r + dr * (span.fwd + 1), c2 = c + dc * (span.fwd + 1);
+        if (inside(r1, c1) && board[r1][c1] === 0 && inside(r2, c2) && board[r2][c2] === 0) {
+          board[r1][c1] = 1; const a = runSpan(board, r1, c1, dr, dc, 1).len === 5; board[r1][c1] = 0;
+          board[r2][c2] = 1; const b = runSpan(board, r2, c2, dr, dc, 1).len === 5; board[r2][c2] = 0;
+          open = a && b;
+        }
+      }
+      board[rr][cc] = 0;
+      if (open) return true;
+    }
+    return false;
+  }
+  // 흑이 (r, c)에 두면 금수인지 → 금수 이름 (아니면 null)
+  function forbiddenReason(board, r, c) {
+    if (RULE !== 'renju' || board[r][c] !== 0) return null;
+    board[r][c] = 1;
+    let reason = null;
+    if (exactFiveAt(board, r, c, 1)) reason = null;            // 정확한 5목은 금수보다 우선 (승리)
+    else if (overlineAt(board, r, c, 1)) reason = '장목';       // 6개 이상
+    else if (fourCount(board, r, c) >= 2) reason = '4-4';
+    else {
+      let threes = 0;
+      for (const [dr, dc] of DIRS) if (isOpenThreeDir(board, r, c, dr, dc)) threes++;
+      if (threes >= 2) reason = '3-3';
+    }
+    board[r][c] = 0;
+    return reason;
+  }
+
+  // ----- 모양 점수 -----
+  // 돌 모양별 점수표 (x = 내 돌, 0 = 빈칸). 위에 있을수록 강한 모양
+  const SHAPES = [
+    { kind: 'five',  score: 100000, pats: ['xxxxx'] },                                   // 5목 (승리)
+    { kind: 'open4', score: 30000,  pats: ['0xxxx0'] },                                  // 열린 4 (못 막음)
+    { kind: 'four',  score: 2500,   pats: ['xxxx0', '0xxxx', 'xxx0x', 'x0xxx', 'xx0xx'] }, // 막힌 4
+    { kind: 'open3', score: 1500,   pats: ['0xxx00', '00xxx0', '0xx0x0', '0x0xx0'] },     // 열린 3
+    { kind: 'three', score: 200,    pats: ['xxx00', '00xxx', 'xx0x0', '0x0xx', 'x0xx0', '0xx0x', 'xx00x', 'x00xx', 'x0x0x', '0xxx0'] },
+    { kind: 'open2', score: 120,    pats: ['00xx00', '0x0x0', '00xx0', '0xx00', '0x00x0'] },
+    { kind: 'two',   score: 20,     pats: ['xx', 'x0x', 'x00x'] },
+  ];
+
+  // (r, c)에 player가 둔다고 할 때, 한 방향에서 생기는 가장 강한 모양
+  function shapeAt(board, r, c, player, dr, dc) {
+    let s = '';
+    for (let k = -5; k <= 5; k++) {
+      const rr = r + dr * k, cc = c + dc * k;
+      if (k === 0) s += 'x';
+      else if (!inside(rr, cc)) s += 'o';
+      else if (board[rr][cc] === player) s += 'x';
+      else if (board[rr][cc] === 0) s += '0';
+      else s += 'o';
+    }
+    for (const shape of SHAPES) {
+      for (const pat of shape.pats) {
+        // 방금 둔 돌(가운데, 5번 칸)을 포함하는 모양만 인정
+        for (let i = Math.max(0, 6 - pat.length); i <= 5; i++) {
+          if (s.startsWith(pat, i) && pat[5 - i] === 'x') return shape;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 한 칸에 두었을 때 4방향을 합친 점수
+  function cellValue(board, r, c, player) {
+    let score = 0, fours = 0, open3 = 0;
+    for (const [dr, dc] of DIRS) {
+      const shape = shapeAt(board, r, c, player, dr, dc);
+      if (!shape) continue;
+      score += shape.score;
+      if (shape.kind === 'open4' || shape.kind === 'four') fours++;
+      else if (shape.kind === 'open3') open3++;
+    }
+    // 두 군데 이상 동시에 위협하면 막기 어려우므로 보너스
+    if (fours >= 2 || (fours >= 1 && open3 >= 1)) score += 20000;
+    else if (open3 >= 2) score += 6000;
+    return score;
+  }
+
+  // 돌 주변의 빈칸만 후보로 (판 전체를 보면 너무 느림)
+  function candidates(board, radius) {
+    const list = [];
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        if (board[r][c] !== 0) continue;
+        let near = false;
+        for (let dr = -radius; dr <= radius && !near; dr++) {
+          for (let dc = -radius; dc <= radius && !near; dc++) {
+            const rr = r + dr, cc = c + dc;
+            if (inside(rr, cc) && board[rr][cc] !== 0) near = true;
+          }
+        }
+        if (near) list.push({ r, c });
+      }
+    }
+    return list;
+  }
+
+  // 후보 칸마다 "공격 + 수비" 점수를 매겨서 좋은 순으로 정렬
+  function scoredMoves(board, player, radius) {
+    const opp = 3 - player;
+    const list = candidates(board, radius);
+    for (const m of list) {
+      m.score = cellValue(board, m.r, m.c, player) + cellValue(board, m.r, m.c, opp) * 0.9;
+      board[m.r][m.c] = player; m.win = makesFive(board, m.r, m.c, player);      // 여기 두면 내가 이김
+      board[m.r][m.c] = opp;    m.mustBlock = makesFive(board, m.r, m.c, opp);   // 안 막으면 상대가 이김
+      board[m.r][m.c] = 0;
+      if (m.win) m.score += 1000000;
+      else if (m.mustBlock) m.score += 500000;
+    }
+    list.sort((a, b) => b.score - a.score);
+    return list;
+  }
+
+  // 렌주룰에서 흑이면 금수 자리를 빼고 좋은 순으로 count개
+  function legalTop(board, list, side, count) {
+    if (RULE !== 'renju' || side !== 1) return list.slice(0, count);
+    const out = [];
+    for (const m of list) {
+      if (m.win || !forbiddenReason(board, m.r, m.c)) out.push(m);
+      if (out.length >= count) break;
+    }
+    return out;
+  }
+
+  // ----- 판 전체 평가 (어려움 단계에서 사용) -----
+  const lineCache = {};
+  function getLines() {
+    if (lineCache[N]) return lineCache[N];
+    const lines = [];
+    for (let i = 0; i < N; i++) {
+      lines.push(Array.from({ length: N }, (_, k) => [i, k])); // 가로
+      lines.push(Array.from({ length: N }, (_, k) => [k, i])); // 세로
+    }
+    for (let start = -(N - 5); start <= N - 5; start++) {
+      const d1 = [], d2 = [];
+      for (let k = 0; k < N; k++) {
+        if (inside(k, k + start)) d1.push([k, k + start]);                 // 대각선 ↘
+        if (inside(k, N - 1 - k - start)) d2.push([k, N - 1 - k - start]); // 대각선 ↙
+      }
+      lines.push(d1, d2);
+    }
+    return (lineCache[N] = lines);
+  }
+  // 흑(1)과 백(2)용 모양표를 미리 만들어 둠
+  const EVAL_PATS = { 1: [], 2: [] };
+  for (const p of [1, 2]) {
+    for (const shape of SHAPES) {
+      for (const pat of shape.pats) EVAL_PATS[p].push({ str: pat.replaceAll('x', String(p)), score: shape.score });
+    }
+  }
+  function evaluate(board, side) {
+    let mine = 0, theirs = 0;
+    const opp = 3 - side;
+    for (const line of getLines()) {
+      let s = '3';
+      let hasStone = false;
+      for (const [r, c] of line) { const v = board[r][c]; s += v; if (v) hasStone = true; }
+      if (!hasStone) continue;
+      s += '3';
+      for (const { str, score } of EVAL_PATS[side]) {
+        for (let i = s.indexOf(str); i !== -1; i = s.indexOf(str, i + 1)) mine += score;
+      }
+      for (const { str, score } of EVAL_PATS[opp]) {
+        for (let i = s.indexOf(str); i !== -1; i = s.indexOf(str, i + 1)) theirs += score;
+      }
+    }
+    return mine * 1.2 - theirs; // 내 차례이므로 내 쪽을 조금 더 높게
+  }
+
+  // 반드시 둬야 하는 수가 있으면 그것만 남기기 (계산량 크게 줄어듦)
+  function forcedFilter(list) {
+    const win = list.find(m => m.win);
+    if (win) return [win];
+    const blocks = list.filter(m => m.mustBlock);
+    return blocks.length ? blocks : list;
+  }
+
+  // ----- 미니맥스 탐색 (나와 상대가 번갈아 최선의 수를 둔다고 보고 몇 수 앞을 내다봄) -----
+  const BEAM = [12, 10, 8, 8, 6, 6]; // 깊이별로 살펴볼 후보 수
+  function searchBest(board, player, timeLimitMs) {
+    const deadline = Date.now() + timeLimitMs;
+    let timeUp = false;
+    let rootBest = null;
+
+    function negamax(depth, alpha, beta, side, ply) {
+      if (Date.now() > deadline) { timeUp = true; return 0; }
+      const sorted = scoredMoves(board, side, ply === 0 ? 2 : 1);
+      const list = forcedFilter(legalTop(board, sorted, side, BEAM[ply]));
+      if (!list.length) return 0;
+      let best = -Infinity, bestMove = list[0];
+      for (const m of list) {
+        board[m.r][m.c] = side;
+        let val;
+        if (m.win) val = WIN_SCORE - ply;
+        else if (depth <= 1) val = -evaluate(board, 3 - side);
+        else val = -negamax(depth - 1, -beta, -alpha, 3 - side, ply + 1);
+        board[m.r][m.c] = 0;
+        if (timeUp) break;
+        if (val > best) { best = val; bestMove = m; }
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break; // 더 볼 필요 없음 (알파-베타 가지치기)
+      }
+      if (ply === 0 && !timeUp) rootBest = bestMove;
+      return best;
+    }
+
+    // 2수 → 4수 → 6수 앞까지 시간이 허락하는 만큼 점점 깊게
+    let answer = null;
+    for (const depth of [2, 4, 6]) {
+      rootBest = null;
+      const score = negamax(depth, -Infinity, Infinity, player, 0);
+      if (timeUp) break;
+      answer = rootBest;
+      if (score >= WIN_SCORE - 10) break; // 이기는 길을 찾았으면 그만
+    }
+    return answer;
+  }
+
+  // ----- AI가 둘 곳 정하기 -----
+  function chooseMove(board, player, level, rule) {
+    N = board.length;
+    RULE = rule;
+    const center = Math.floor(N / 2);
+    const stones = [];
+    board.forEach((row, r) => row.forEach((v, c) => { if (v) stones.push({ r, c }); }));
+    if (stones.length === 0) return { row: center, col: center };
+    // 상대가 첫 수를 두었으면 바로 옆(대각선)에 붙여 두기
+    if (stones.length === 1) {
+      const { r, c } = stones[0];
+      const options = [[1, 1], [1, -1], [-1, 1], [-1, -1]]
+        .map(([dr, dc]) => ({ row: r + dr, col: c + dc }))
+        .filter(m => inside(m.row, m.col));
+      return options[Math.floor(Math.random() * options.length)];
+    }
+
+    const list = legalTop(board, scoredMoves(board, player, 2), player, 40);
+    if (!list.length) return null;
+    const win = list.find(m => m.win);
+    if (win) return { row: win.r, col: win.c };
+    const block = list.find(m => m.mustBlock);
+
+    if (level === 'easy') {
+      // 쉬움: 가끔 막는 것을 놓치고, 좋은 후보 중 아무거나 고름
+      if (block && Math.random() < 0.75) return { row: block.r, col: block.c };
+      const pool = list.slice(0, 6);
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      return { row: pick.r, col: pick.c };
+    }
+    if (block) return { row: block.r, col: block.c };
+
+    if (level === 'normal') {
+      // 보통: 지금 당장 가장 점수가 높은 곳 (약간의 무작위)
+      let best = list[0], bestScore = -Infinity;
+      for (const m of list.slice(0, 8)) {
+        const s = m.score + Math.random() * 40;
+        if (s > bestScore) { bestScore = s; best = m; }
+      }
+      return { row: best.r, col: best.c };
+    }
+
+    // 어려움: 몇 수 앞을 내다보고 결정 (판이 클수록 생각할 시간을 조금 더 줌)
+    const work = board.map(row => row.slice());
+    const best = searchBest(work, player, N >= 19 ? 2200 : 1800) || list[0];
+    return { row: best.r, col: best.c };
+  }
+
+  return {
+    chooseMove,
+    forbiddenReason(board, r, c, rule) { N = board.length; RULE = rule; return forbiddenReason(board, r, c); },
+  };
+}
+
+// 화면 쪽에서 쓰는 규칙 계산기 + 웹 워커 (실패하면 화면에서 직접 계산)
+const engine = createAiEngine();
+let aiWorker = null;
+try {
+  const source = `const engine = (${createAiEngine.toString()})();
+    onmessage = (e) => postMessage({ id: e.data.id, move: engine.chooseMove(e.data.board, e.data.player, e.data.level, e.data.rule) });`;
+  aiWorker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+} catch (err) {
+  aiWorker = null;
+}
+
+// ============================================================
+// 10. 게임 진행 함수
+// ============================================================
+// 방금 둔 돌로 5개가 이어졌는지 검사 → 이어진 돌 목록 (없으면 null)
+const DIRECTIONS = [[0, 1], [1, 0], [1, 1], [1, -1]]; // 가로, 세로, 대각선 ↘, 대각선 ↙
+function findWinLine(row, col, player) {
+  for (const [dr, dc] of DIRECTIONS) {
+    const line = [{ row, col }];
+    for (let r = row + dr, c = col + dc; isInside(r, c) && board[r][c] === player; r += dr, c += dc) line.push({ row: r, col: c });
+    for (let r = row - dr, c = col - dc; isInside(r, c) && board[r][c] === player; r -= dr, c -= dc) line.unshift({ row: r, col: c });
+    // 렌주룰의 흑은 정확히 5개, 그 밖에는 5개 이상
+    const needExact = gameRule === 'renju' && player === BLACK;
+    if (needExact ? line.length === 5 : line.length >= 5) return line;
+  }
+  return null;
+}
+
+function placeStone(row, col) {
+  if (gameOver || !isInside(row, col) || board[row][col] !== EMPTY) return false;
+  const player = currentPlayer;
+
+  // 렌주룰: 흑은 금수 자리에 둘 수 없음
+  if (gameRule === 'renju' && player === BLACK) {
+    const reason = engine.forbiddenReason(board, row, col, gameRule);
+    if (reason) {
+      showToast(`금수예요! (${reason}) 흑은 이 자리에 둘 수 없어요`);
+      return false;
+    }
+  }
+
+  board[row][col] = player;
+  moves.push({ row, col, player });
+
+  const mesh = createStoneMesh(stoneMaterials[player]);
+  const { x, z } = cellToWorld(row, col);
+  mesh.position.set(x, STONE_HALF_HEIGHT, z);
+  scene.add(mesh);
+  stoneMeshes.set(cellKey(row, col), mesh);
+  startDrop(mesh, playStoneSound);                         // 판에 닿는 순간 "딱" 소리
+  mannequins[player].reachStart = clock.getElapsedTime();  // 인형이 팔을 뻗음
+
+  const winLine = findWinLine(row, col, player);
+  if (winLine) {
+    endGame(player, winLine);
+  } else if (moves.length === boardSize * boardSize) {
+    endGame(null, null); // 판이 가득 차면 무승부
+  } else {
+    currentPlayer = player === BLACK ? WHITE : BLACK;
+  }
+  updateTurnUI();
+  updateForbidMarkers();
+  maybeAiTurn();
+  return true;
+}
+
+function endGame(winner, winLine) {
+  gameOver = true;
+  winnerPlayer = winner;
+  previewStone.visible = false;
+  if (winLine) startWinGlow(winLine);
+  recordResult(winner);
+
+  // 결과 문구 정하기
+  let kind, title, sub;
+  if (winner === null) {
+    kind = 'draw'; title = '무승부'; sub = '판이 가득 찼어요. 막상막하!';
+  } else if (gameMode === 'pvp') {
+    kind = 'win'; title = `${PLAYER_NAMES[winner]} 승리!`; sub = `${PLAYER_NAMES[winner]}이 다섯 개를 먼저 이었어요`;
+  } else if (winner === humanColor) {
+    kind = 'win'; title = '승리!'; sub = `축하해요! AI(${LEVEL_NAMES[aiLevel]})를 이겼어요 🎉`;
+  } else {
+    kind = 'lose'; title = '패배'; sub = `AI(${LEVEL_NAMES[aiLevel]})가 이겼어요. 다시 도전해 보세요!`;
+  }
+  const record = gameMode === 'pvp'
+    ? `2인 대전 전적: ${recordText('pvp')}`
+    : `${LEVEL_NAMES[aiLevel]} 전적: ${recordText(aiLevel)}`;
+
+  setTimeout(() => { if (gameOver) (kind === 'lose' ? playLoseSound : playWinSound)(); }, 320);
+  winMessageTimer = setTimeout(() => showResult(kind, title, sub, record), winLine ? WIN_MESSAGE_DELAY : 400);
+}
+
+// 돌 하나를 판에서 치우기
+function removeStoneMesh(key) {
+  const mesh = stoneMeshes.get(key);
+  const animIndex = dropAnimations.findIndex(a => a.mesh === mesh);
+  if (animIndex !== -1) dropAnimations.splice(animIndex, 1);
+  scene.remove(mesh);
+  stoneMeshes.delete(key);
+}
+
+function undoMove() {
+  const last = moves.pop();
+  if (!last) return;
+  clearWinGlow();
+  if (gameOver) cancelLastRecord(); // 끝난 판을 무르면 기록도 취소
+  board[last.row][last.col] = EMPTY;
+  removeStoneMesh(cellKey(last.row, last.col));
+  currentPlayer = last.player;
+  gameOver = false;
+  winnerPlayer = null;
+  hideResult();
+  updateTurnUI();
+  updateForbidMarkers();
+}
+
+// 무르기 버튼: AI 대전이면 AI 수와 내 수를 함께 되돌림
+function onUndoClick() {
+  if (gameMode === 'pvp') { undoMove(); return; }
+  cancelAi();
+  while (moves.length) {
+    const lastPlayer = moves[moves.length - 1].player;
+    undoMove();
+    if (lastPlayer === humanColor) break; // 내 수까지 되돌렸으면 멈춤
+  }
+  maybeAiTurn(); // AI가 흑인데 첫 수까지 지워졌으면 다시 둠
+}
+
+function newGame() {
+  cancelAi();
+  clearWinGlow();
+  for (const key of [...stoneMeshes.keys()]) removeStoneMesh(key);
+  board = Array.from({ length: boardSize }, () => Array(boardSize).fill(EMPTY));
+  moves = [];
+  currentPlayer = BLACK;
+  gameOver = false;
+  winnerPlayer = null;
+  pendingTouchCell = null;
+  previewStone.visible = false;
+  hideResult();
+  updateTurnUI();
+  updateForbidMarkers();
+  maybeAiTurn(); // 내가 백이면 AI가 먼저 둠
+}
+
+// 흑 차례(사람)일 때 금수 자리에 빨간 X 표시
+function updateForbidMarkers() {
+  let used = 0;
+  const show = gameRule === 'renju' && !gameOver && currentPlayer === BLACK && (gameMode === 'pvp' || humanColor === BLACK);
+  if (show) {
+    for (let r = 0; r < boardSize; r++) {
+      for (let c = 0; c < boardSize; c++) {
+        if (board[r][c] !== EMPTY || !hasBlackNearby(r, c)) continue;
+        if (!engine.forbiddenReason(board, r, c, gameRule)) continue;
+        const marker = getForbidMarker(used++);
+        const { x, z } = cellToWorld(r, c);
+        marker.position.set(x, 0.015, z);
+        marker.visible = true;
+      }
+    }
+  }
+  for (let i = used; i < forbidMarkers.length; i++) forbidMarkers[i].visible = false;
+}
+// 금수는 근처에 흑돌이 있어야만 생기므로, 계산할 칸을 줄이기 위한 검사
+function hasBlackNearby(r, c) {
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      if (isInside(r + dr, c + dc) && board[r + dr][c + dc] === BLACK) return true;
+    }
+  }
+  return false;
+}
+
+// ----- AI 차례 -----
+function cancelAi() {
+  aiRequestId++;
+  aiThinking = false;
+}
+function maybeAiTurn() {
+  if (gameMode !== 'ai' || gameOver || aiThinking || currentPlayer === humanColor) return;
+  aiThinking = true;
+  previewStone.visible = false;
+  updateTurnUI();
+
+  const id = ++aiRequestId;
+  const startedAt = performance.now();
+  const request = { id, board: board.map(row => row.slice()), player: currentPlayer, level: aiLevel, rule: gameRule };
+
+  const finish = (move) => {
+    if (id !== aiRequestId) return; // 그 사이 무르기·새 게임을 했으면 무시
+    const wait = Math.max(0, AI_MIN_THINK_MS - (performance.now() - startedAt));
+    setTimeout(() => {
+      if (id !== aiRequestId) return;
+      aiThinking = false;
+      if (move) placeStone(move.row, move.col);
+      else endGame(null, null); // 둘 곳이 없으면 무승부
+    }, wait);
+  };
+  const runLocally = () => setTimeout(() => finish(engine.chooseMove(request.board, request.player, request.level, request.rule)), 30);
+
+  if (aiWorker) {
+    aiWorker.onmessage = (e) => { if (e.data.id === id) finish(e.data.move); };
+    aiWorker.onerror = () => { aiWorker = null; runLocally(); };
+    aiWorker.postMessage(request);
+  } else {
+    runLocally();
+  }
+}
+
+// ============================================================
+// 11. 브라우저 저장소 (실패해도 게임은 그대로 돌아가게)
+// ============================================================
+function loadSaved(key, fallback) {
+  try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback; } catch { return fallback; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 저장 못 해도 무시 */ }
+}
+
+// ============================================================
+// 12. 효과음 (소리 파일 없이 코드로 소리를 만듭니다)
+// ============================================================
+let soundOn = loadSaved('gomoku3d-sound', true);
+let audioCtx = null;
+
+function getAudio() {
+  if (!audioCtx) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    audioCtx = new AudioCtx();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume(); // 브라우저는 처음 클릭 전엔 소리를 막아둠
+  return audioCtx;
+}
+
+// "딱!" 돌 놓는 소리 = 짧은 잡음 + 낮은 울림
+function playStoneSound() {
+  if (!soundOn) return;
+  const ac = getAudio();
+  if (!ac) return;
+  const t = ac.currentTime;
+  const length = Math.floor(ac.sampleRate * 0.07);
+  const buffer = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 5);
+  const noise = ac.createBufferSource();
+  noise.buffer = buffer;
+  const filter = ac.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 2400;
+  filter.Q.value = 1.1;
+  const noiseGain = ac.createGain();
+  noiseGain.gain.value = 0.7;
+  noise.connect(filter).connect(noiseGain).connect(ac.destination);
+  noise.start(t);
+
+  const osc = ac.createOscillator();
+  osc.frequency.setValueAtTime(300, t);
+  osc.frequency.exponentialRampToValueAtTime(110, t + 0.1);
+  const oscGain = ac.createGain();
+  oscGain.gain.setValueAtTime(0.3, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  osc.connect(oscGain).connect(ac.destination);
+  osc.start(t);
+  osc.stop(t + 0.13);
+}
+
+// 음을 차례로 연주하기 (승리음 / 패배음)
+function playMelody(notes, step) {
+  if (!soundOn) return;
+  const ac = getAudio();
+  if (!ac) return;
+  notes.forEach((freq, i) => {
+    const t = ac.currentTime + i * step;
+    const isLast = i === notes.length - 1;
+    const osc = ac.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + (isLast ? 0.8 : 0.22));
+    osc.connect(gain).connect(ac.destination);
+    osc.start(t);
+    osc.stop(t + 0.85);
+  });
+}
+const playWinSound = () => playMelody([523.25, 659.25, 783.99, 1046.5, 1318.5], 0.11); // 도-미-솔-도-미
+const playLoseSound = () => playMelody([392.0, 349.23, 311.13, 261.63], 0.18);          // 내려가는 음
+
+const soundButton = document.getElementById('btn-sound');
+function updateSoundButton() { soundButton.textContent = soundOn ? '🔊 소리' : '🔇 소리'; }
+soundButton.addEventListener('click', () => {
+  soundOn = !soundOn;
+  save('gomoku3d-sound', soundOn);
+  updateSoundButton();
+  if (soundOn) playStoneSound();
+});
+
+// ============================================================
+// 13. 전적 기록
+// ============================================================
+const RECORD_KEY = 'gomoku3d-records';
+const LEVEL_NAMES = { easy: '쉬움', normal: '보통', hard: '어려움' };
+function emptyRecords() {
+  return {
+    easy: { win: 0, lose: 0, draw: 0 },
+    normal: { win: 0, lose: 0, draw: 0 },
+    hard: { win: 0, lose: 0, draw: 0 },
+    pvp: { black: 0, white: 0, draw: 0 },
+  };
+}
+// 저장된 기록이 일부 빠져 있어도 안전하게 합치기
+function loadRecords() {
+  const saved = loadSaved(RECORD_KEY, {});
+  const base = emptyRecords();
+  for (const group of Object.keys(base)) Object.assign(base[group], saved?.[group]);
+  return base;
+}
+let records = loadRecords();
+let lastRecorded = null; // 무르기로 결과를 취소할 때 기록도 되돌리기 위해
+
+function recordResult(winner) {
+  let group, field;
+  if (gameMode === 'pvp') {
+    group = 'pvp';
+    field = winner === BLACK ? 'black' : winner === WHITE ? 'white' : 'draw';
+  } else {
+    group = aiLevel;
+    field = winner === null ? 'draw' : winner === humanColor ? 'win' : 'lose';
+  }
+  records[group][field]++;
+  lastRecorded = { group, field };
+  save(RECORD_KEY, records);
+}
+function cancelLastRecord() {
+  if (!lastRecorded) return;
+  records[lastRecorded.group][lastRecorded.field]--;
+  lastRecorded = null;
+  save(RECORD_KEY, records);
+}
+function recordText(group) {
+  const r = records[group];
+  if (group === 'pvp') return `흑 ${r.black}승 · 백 ${r.white}승` + (r.draw ? ` · 무 ${r.draw}` : '');
+  return `${r.win}승 ${r.lose}패` + (r.draw ? ` ${r.draw}무` : '');
+}
+function renderRecords() {
+  const el = document.getElementById('records');
+  el.innerHTML = `
+    <b>AI 전적</b><br>
+    쉬움 ${recordText('easy')} · 보통 ${recordText('normal')} · 어려움 ${recordText('hard')}<br>
+    <b>2인 대전</b> ${recordText('pvp')}<br>
+    <button class="link-btn" id="btn-clear-records">기록 지우기</button>`;
+  document.getElementById('btn-clear-records').addEventListener('click', () => {
+    if (!confirm('전적 기록을 모두 지울까요?')) return;
+    records = emptyRecords();
+    lastRecorded = null;
+    save(RECORD_KEY, records);
+    renderRecords();
+  });
+}
+
+// ============================================================
+// 14. 화면 UI (차례 표시, 알림, 결과 화면, 메인 화면)
+// ============================================================
+const turnStone = document.getElementById('turn-stone');
+const turnText = document.getElementById('turn-text');
+
+function stoneCss(hex) { return `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.75), ${hex} 55%)`; }
+
+function updateTurnUI() {
+  turnStone.style.background = stoneCss(stoneColors[currentPlayer]);
+  if (gameOver) turnText.textContent = '게임 끝';
+  else if (gameMode === 'pvp') turnText.textContent = `${PLAYER_NAMES[currentPlayer]} 차례`;
+  else if (aiThinking) turnText.textContent = 'AI 생각 중...';
+  else turnText.textContent = `내 차례 (${PLAYER_NAMES[currentPlayer]})`;
+}
+
+// 잠깐 떴다 사라지는 알림
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+
+// ----- 화려한 결과 화면 -----
+const resultEl = document.getElementById('result');
+let homeCountdown = null;
+function showResult(kind, title, sub, record) {
+  resultEl.className = 'result ' + kind;
+  document.getElementById('result-title').textContent = title;
+  document.getElementById('result-sub').textContent = sub;
+  document.getElementById('result-record').textContent = record;
+  if (kind !== 'lose') startConfetti();
+
+  // 몇 초 뒤 자동으로 메인 화면으로
+  let left = AUTO_HOME_SECONDS;
+  const countEl = document.getElementById('result-count');
+  const tick = () => { countEl.textContent = `${left}초 후 메인 화면으로 돌아갑니다`; };
+  tick();
+  clearInterval(homeCountdown);
+  homeCountdown = setInterval(() => {
+    left--;
+    if (left <= 0) openMenu(); else tick();
+  }, 1000);
+}
+function hideResult() {
+  clearInterval(homeCountdown);
+  resultEl.classList.add('hidden');
+  stopConfetti();
+}
+
+// 색종이 효과 (캔버스에 직접 그림)
+const confettiCanvas = document.getElementById('confetti');
+const confettiCtx = confettiCanvas.getContext('2d');
+const CONFETTI_COLORS = ['#ffd34d', '#ff6b6b', '#4dabf7', '#69db7c', '#f783ac', '#ffffff', '#b197fc'];
+let confetti = [];
+let confettiRunning = false;
+function startConfetti() {
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  confettiCanvas.width = window.innerWidth * dpr;
+  confettiCanvas.height = window.innerHeight * dpr;
+  confettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = window.innerWidth, h = window.innerHeight;
+  confetti = Array.from({ length: 240 }, (_, i) => {
+    const burst = i < 120; // 절반은 가운데서 펑, 절반은 위에서 쏟아짐
+    const angle = Math.random() * Math.PI * 2, speed = 4 + Math.random() * 9;
+    return {
+      x: burst ? w / 2 : Math.random() * w,
+      y: burst ? h / 2 : -Math.random() * h * 0.8,
+      vx: burst ? Math.cos(angle) * speed : (Math.random() - 0.5) * 2,
+      vy: burst ? Math.sin(angle) * speed - 4 : 2 + Math.random() * 3,
+      size: 6 + Math.random() * 8,
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.3,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      round: Math.random() < 0.3,
+    };
+  });
+  if (!confettiRunning) { confettiRunning = true; requestAnimationFrame(drawConfetti); }
+}
+function drawConfetti() {
+  if (!confettiRunning) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  confettiCtx.clearRect(0, 0, w, h);
+  for (const p of confetti) {
+    p.vy += 0.12;          // 중력
+    p.vx *= 0.99;          // 공기 저항
+    p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+    confettiCtx.save();
+    confettiCtx.translate(p.x, p.y);
+    confettiCtx.rotate(p.rot);
+    confettiCtx.scale(Math.cos(p.rot * 2), 1); // 빙글빙글 뒤집히는 효과
+    confettiCtx.fillStyle = p.color;
+    if (p.round) { confettiCtx.beginPath(); confettiCtx.arc(0, 0, p.size / 2.5, 0, Math.PI * 2); confettiCtx.fill(); }
+    else confettiCtx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+    confettiCtx.restore();
+  }
+  confetti = confetti.filter(p => p.y < h + 30);
+  if (confetti.length) requestAnimationFrame(drawConfetti);
+  else stopConfetti();
+}
+function stopConfetti() {
+  confettiRunning = false;
+  confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+}
+
+// ----- 메인 화면 -----
+const menuEl = document.getElementById('menu');
+const DEFAULT_SETTINGS = { mode: 'ai', level: 'normal', color: '1', size: '15', rule: 'renju', color1: STONE_COLORS[0], color2: STONE_COLORS[1] };
+let settings = { ...DEFAULT_SETTINGS, ...loadSaved('gomoku3d-settings', {}) };
+
+function getChoice(group) {
+  return menuEl.querySelector(`.seg[data-group="${group}"] button.on`).dataset.value;
+}
+function setChoice(group, value) {
+  menuEl.querySelectorAll(`.seg[data-group="${group}"] button`).forEach(b => b.classList.toggle('on', b.dataset.value === String(value)));
+}
+// 버튼 묶음에서 하나만 선택되게
+for (const seg of menuEl.querySelectorAll('.seg')) {
+  seg.addEventListener('click', (e) => {
+    const button = e.target.closest('button');
+    if (!button) return;
+    setChoice(seg.dataset.group, button.dataset.value);
+    updateMenuRows();
+  });
+}
+// 2인 대전이면 AI 실력·내 돌 선택 숨기기
+function updateMenuRows() {
+  const isAi = getChoice('mode') === 'ai';
+  menuEl.querySelectorAll('.ai-only').forEach(row => row.classList.toggle('hidden-row', !isAi));
+}
+
+// 돌 색 고르기 (두 돌이 같은 색이 되지 않게)
+const menuColors = { 1: settings.color1, 2: settings.color2 };
+function renderSwatches() {
+  for (const box of menuEl.querySelectorAll('.swatches')) {
+    const p = Number(box.dataset.player);
+    box.innerHTML = '';
+    for (const hex of STONE_COLORS) {
+      const sw = document.createElement('button');
+      sw.className = 'swatch' + (menuColors[p] === hex ? ' on' : '');
+      sw.style.background = stoneCss(hex);
+      sw.title = hex;
+      sw.addEventListener('click', () => {
+        const other = 3 - p;
+        if (menuColors[other] === hex) menuColors[other] = menuColors[p]; // 같은 색이면 서로 바꿈
+        menuColors[p] = hex;
+        renderSwatches();
+      });
+      box.appendChild(sw);
+    }
+  }
+}
+
+function openMenu() {
+  hideResult();
+  cancelAi();
+  renderRecords();
+  menuEl.classList.remove('hidden');
+}
+function startFromMenu() {
+  gameMode = getChoice('mode');
+  aiLevel = getChoice('level');
+  humanColor = Number(getChoice('color'));
+  gameRule = getChoice('rule');
+  stoneColors = { [BLACK]: menuColors[1], [WHITE]: menuColors[2] };
+  settings = { mode: gameMode, level: aiLevel, color: String(humanColor), size: getChoice('size'), rule: gameRule, color1: menuColors[1], color2: menuColors[2] };
+  save('gomoku3d-settings', settings);
+
+  // 판 크기가 바뀌었으면 판과 인형 위치를 새로 만듦
+  const size = Number(settings.size);
+  if (size !== boardSize) {
+    for (const key of [...stoneMeshes.keys()]) removeStoneMesh(key);
+    setBoardMetrics(size);
+    buildBoard();
+    placeMannequins();
+    moveCameraTo('normal');
+  }
+  applyStoneColors();
+  document.getElementById('info-chip').textContent = `${gameRule === 'renju' ? '렌주룰' : '자유룰'} · ${boardSize}줄`;
+  menuEl.classList.add('hidden');
+  newGame();
+}
+
+// ============================================================
+// 15. 마우스·터치로 돌 놓기
+// ============================================================
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // 판 윗면 (높이 0)
+const hitPoint = new THREE.Vector3();
+
+// 화면 좌표 → 판의 칸 (레이캐스팅: 화면에서 3D 공간으로 광선을 쏴서 닿는 곳 찾기)
+function getCellFromEvent(event) {
+  const rect = canvas.getBoundingClientRect();
+  pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointerNdc, camera);
+  if (!raycaster.ray.intersectPlane(boardPlane, hitPoint)) return null;
+  const col = Math.round((hitPoint.x + halfSpan) / CELL_SIZE);
+  const row = Math.round((hitPoint.z + halfSpan) / CELL_SIZE);
+  return isInside(row, col) ? { row, col } : null;
+}
+
+// 지금 사람이 돌을 놓을 수 있는지
+function canHumanPlay() {
+  return !gameOver && !aiThinking && (gameMode === 'pvp' || currentPlayer === humanColor);
+}
+
+function showPreview(cell) {
+  if (!cell || !canHumanPlay() || board[cell.row][cell.col] !== EMPTY) {
+    previewStone.visible = false;
+    return;
+  }
+  const { x, z } = cellToWorld(cell.row, cell.col);
+  previewStone.material = previewMaterials[currentPlayer];
+  previewStone.position.set(x, STONE_HALF_HEIGHT, z);
+  previewStone.visible = true;
+}
+
+// 드래그(판 회전)와 클릭(돌 놓기)을 구분하기
+const TAP_MOVE_LIMIT = 8;     // 이 픽셀보다 많이 움직이면 드래그로 봄
+const activePointers = new Map();
+let tapStart = null;
+let pendingTouchCell = null;  // 휴대폰: 첫 터치로 고른 칸 (한 번 더 누르면 놓기)
+
+canvas.addEventListener('pointerdown', (e) => {
+  activePointers.set(e.pointerId, true);
+  tapStart = activePointers.size === 1 ? { x: e.clientX, y: e.clientY } : null; // 두 손가락이면 확대·축소
+  getAudio(); // 첫 터치 때 소리 준비
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse' && activePointers.size === 0) showPreview(getCellFromEvent(e));
+});
+canvas.addEventListener('pointerup', (e) => {
+  activePointers.delete(e.pointerId);
+  if (!tapStart) return;
+  const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y);
+  tapStart = null;
+  if (moved > TAP_MOVE_LIMIT || !canHumanPlay()) return;
+
+  const cell = getCellFromEvent(e);
+  if (!cell || board[cell.row][cell.col] !== EMPTY) return;
+
+  if (e.pointerType === 'mouse') {
+    placeStone(cell.row, cell.col);
+    showPreview(cell);
+  } else {
+    // 터치: 첫 번째 터치는 미리보기, 같은 칸을 한 번 더 터치하면 놓기
+    if (pendingTouchCell && pendingTouchCell.row === cell.row && pendingTouchCell.col === cell.col) {
+      placeStone(cell.row, cell.col);
+      pendingTouchCell = null;
+      previewStone.visible = false;
+    } else {
+      pendingTouchCell = cell;
+      showPreview(cell);
+    }
+  }
+});
+canvas.addEventListener('pointercancel', (e) => { activePointers.delete(e.pointerId); tapStart = null; });
+canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') previewStone.visible = false; });
+
+// ----- 버튼 연결 -----
+document.getElementById('btn-undo').addEventListener('click', onUndoClick);
+document.getElementById('btn-home').addEventListener('click', openMenu);
+document.getElementById('btn-start').addEventListener('click', startFromMenu);
+document.getElementById('btn-result-home').addEventListener('click', openMenu);
+document.getElementById('btn-result-again').addEventListener('click', newGame);
+document.getElementById('btn-result-view').addEventListener('click', hideResult);
+
+// 시점 버튼
+for (const btn of document.querySelectorAll('[data-view]')) {
+  btn.addEventListener('click', () => moveCameraTo(btn.dataset.view));
+}
+const autoRotateBtn = document.getElementById('btn-auto-rotate');
+autoRotateBtn.addEventListener('click', () => {
+  controls.autoRotate = !controls.autoRotate;
+  autoRotateBtn.classList.toggle('on', controls.autoRotate);
+});
+
+// 휴대폰이면 안내 문구 바꾸기
+if (window.matchMedia('(pointer: coarse)').matches) {
+  document.getElementById('hint').textContent = '터치: 위치 고르기 · 한 번 더: 놓기 · 두 손가락: 확대';
+}
+
+// ============================================================
+// 16. 화면 크기 변경 대응과 그리기 반복
+// ============================================================
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  // 보는 방향은 그대로 두고, 화면에 다 들어오도록 거리만 맞춤
+  camera.position.setLength(fitDistance());
+  controls.update();
+}
+window.addEventListener('resize', onResize);
+
+// 매 프레임마다 화면을 다시 그리기
+function animate() {
+  requestAnimationFrame(animate);
+  const time = clock.getElapsedTime();
+  updateDrops(time);
+  updateGlow(time);
+  updateLastMarker();
+  updateMannequins(time);
+  updateCameraTween(time);
+  previewStone.material.opacity = 0.35 + 0.15 * Math.sin(time * 4); // 미리보기 돌이 은은하게 깜빡임
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// ============================================================
+// 17. 시작
+// ============================================================
+// 지난번에 고른 설정을 메인 화면에 표시
+for (const group of ['mode', 'level', 'color', 'size', 'rule']) setChoice(group, settings[group]);
+updateMenuRows();
+renderSwatches();
+
+setBoardMetrics(Number(settings.size));
+buildBoard();
+placeMannequins();
+stoneColors = { [BLACK]: settings.color1, [WHITE]: settings.color2 };
+applyStoneColors();
+resetCamera();
+newGame();
+updateSoundButton();
+renderRecords();
+animate();
+</script>
+</body>
+</html>
