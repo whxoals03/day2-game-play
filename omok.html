@@ -149,6 +149,8 @@
   .result-buttons { position: relative; display: flex; gap: 10px; margin-top: 28px; flex-wrap: wrap; justify-content: center; animation: rise 0.6s 0.8s both; }
   .result-buttons .btn { padding: 11px 20px; font-size: 15px; }
   .result-buttons .btn-main { background: #ffd34d; border-color: #ffd34d; color: #3a2405; font-weight: bold; }
+  .result-ai { position: relative; color: #ffe9a8; font-size: 16px; margin-top: 14px; padding: 0 20px; max-width: 560px; text-align: center; min-height: 1.4em; animation: rise 0.6s 0.7s both; }
+  .result-ai.note { color: rgba(255, 255, 255, 0.6); font-size: 13px; }
   .result-count { position: relative; color: rgba(255, 255, 255, 0.6); font-size: 13px; margin-top: 16px; animation: rise 0.6s 1s both; }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes pop {
@@ -209,6 +211,7 @@
   <div class="result-title" id="result-title">승리!</div>
   <div class="result-sub" id="result-sub"></div>
   <div class="result-record" id="result-record"></div>
+  <div class="result-ai" id="result-ai"></div>
   <div class="result-buttons">
     <button class="btn btn-main" id="btn-result-home">메인 화면</button>
     <button class="btn" id="btn-result-again">바로 다시 하기</button>
@@ -1246,7 +1249,7 @@ function endGame(winner, winLine) {
     : `${LEVEL_NAMES[aiLevel]} 전적: ${recordText(aiLevel)}`;
 
   setTimeout(() => { if (gameOver) (kind === 'lose' ? playLoseSound : playWinSound)(); }, 320);
-  winMessageTimer = setTimeout(() => showResult(kind, title, sub, record), winLine ? WIN_MESSAGE_DELAY : 400);
+  winMessageTimer = setTimeout(() => showResult(kind, title, sub, record, winner), winLine ? WIN_MESSAGE_DELAY : 400);
 }
 
 // 돌 하나를 판에서 치우기
@@ -1548,7 +1551,7 @@ function showToast(text) {
 // ----- 화려한 결과 화면 -----
 const resultEl = document.getElementById('result');
 let homeCountdown = null;
-function showResult(kind, title, sub, record) {
+function showResult(kind, title, sub, record, winner) {
   resultEl.className = 'result ' + kind;
   document.getElementById('result-title').textContent = title;
   document.getElementById('result-sub').textContent = sub;
@@ -1556,17 +1559,64 @@ function showResult(kind, title, sub, record) {
   if (kind !== 'lose') startConfetti();
 
   // 몇 초 뒤 자동으로 메인 화면으로
-  let left = AUTO_HOME_SECONDS;
+  homeLeft = AUTO_HOME_SECONDS;
   const countEl = document.getElementById('result-count');
-  const tick = () => { countEl.textContent = `${left}초 후 메인 화면으로 돌아갑니다`; };
+  const tick = () => { countEl.textContent = `${homeLeft}초 후 메인 화면으로 돌아갑니다`; };
   tick();
   clearInterval(homeCountdown);
   homeCountdown = setInterval(() => {
-    left--;
-    if (left <= 0) openMenu(); else tick();
+    if (commentaryPending) return; // AI 해설을 기다리는 동안은 메인 화면으로 넘어가지 않음
+    homeLeft--;
+    if (homeLeft <= 0) openMenu(); else tick();
   }, 1000);
+
+  showAiCommentary(winner);
+}
+
+// ----- AI 한 줄 해설 (서버 함수 /api/commentary 호출, 비밀 키는 서버에만 있음) -----
+let homeLeft = 0;
+let commentaryToken = 0;
+let commentaryPending = false;
+async function showAiCommentary(winner) {
+  const el = document.getElementById('result-ai');
+  const token = ++commentaryToken;
+  el.className = 'result-ai note';
+  el.textContent = '';
+
+  // 파일을 그냥 열었을 때는 서버가 없으므로 안내만 보여줌
+  if (location.protocol === 'file:') {
+    el.textContent = '배포하면 AI 해설이 나옵니다';
+    return;
+  }
+
+  el.textContent = '🤖 AI 해설을 쓰는 중…';
+  commentaryPending = true;
+  try {
+    const res = await fetch('/api/commentary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        winner: winner === null ? 'draw' : winner === BLACK ? 'black' : 'white',
+        totalMoves: moves.length,
+        mode: gameMode === 'pvp' ? 'pvp' : 'ai',
+      }),
+      signal: AbortSignal.timeout(22000),
+    });
+    if (!res.ok) throw new Error('http ' + res.status);
+    const { comment } = await res.json();
+    if (token !== commentaryToken || resultEl.classList.contains('hidden')) return; // 이미 다른 화면으로 넘어감
+    el.className = 'result-ai';
+    el.textContent = '🤖 ' + comment;
+    homeLeft = Math.max(homeLeft, AUTO_HOME_SECONDS - 2); // 읽을 시간 확보
+  } catch {
+    if (token === commentaryToken) { el.textContent = ''; } // 실패하면 조용히 숨김
+  } finally {
+    if (token === commentaryToken) commentaryPending = false;
+  }
 }
 function hideResult() {
+  commentaryToken++;
+  commentaryPending = false;
   clearInterval(homeCountdown);
   resultEl.classList.add('hidden');
   stopConfetti();
