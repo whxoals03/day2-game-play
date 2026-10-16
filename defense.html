@@ -38,6 +38,8 @@
   .waveRow { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 8px 0; }
   .waveBtn { background: #e8f5e9; color: #2e7d32; border: 3px solid #a5d6a7; min-width: 70px; padding: 10px 12px; }
   .waveBtn.selected { background: #43a047; color: #fff; border-color: #1b5e20; }
+  .aiLine { font-size: 15px; color: #5d4037; margin: 8px 4px 4px; min-height: 1.3em; line-height: 1.4; }
+  .aiLine.note { font-size: 13px; color: #8d6e63; }
   .bestText { font-size: 16px; color: #6d4c41; margin: 6px 0; }
 
   /* 통계 상자 */
@@ -127,6 +129,7 @@
     <h2 id="endTitle">게임 오버</h2>
     <div class="statRow" id="endStats"></div>
     <div class="bestText" id="endBest"></div>
+    <div class="aiLine" id="endAi"></div>
     <button class="bigBtn" id="retryBtn">다시 하기</button>
     <button class="subBtn" id="endMenuBtn">메인 화면</button>
   </div>
@@ -596,6 +599,46 @@ function endGame(victory) {
   $('endBest').textContent = '🏆 최고 점수 (' + diff().name + ' · ' + totalWaves + '웨이브): ' + best + (newRecord ? '  (신기록!)' : '');
   show($('endOverlay'));
   if (victory) soundVictory(); else soundGameOver();
+  showEndCommentary(victory);
+}
+
+// ---------- AI 한 줄 해설 (서버 함수 /api/commentary 호출, 비밀 키는 서버에만 있음) ----------
+let endAiToken = 0;
+async function showEndCommentary(victory) {
+  const el = $('endAi');
+  const token = ++endAiToken;
+  el.className = 'aiLine note';
+  el.textContent = '';
+
+  // 파일을 그냥 열었을 때는 서버가 없으므로 안내만 보여줌
+  if (location.protocol === 'file:') {
+    el.textContent = '배포하면 AI 해설이 나옵니다';
+    return;
+  }
+
+  el.textContent = '🤖 AI 해설을 쓰는 중…';
+  try {
+    const res = await fetch('/api/commentary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: 'defense',
+        result: victory ? 'win' : 'lose',
+        difficulty,
+        wave,
+        totalWaves,
+        score: Math.round(score),
+      }),
+      signal: AbortSignal.timeout(22000),
+    });
+    if (!res.ok) throw new Error('http ' + res.status);
+    const { comment } = await res.json();
+    if (token !== endAiToken || $('endOverlay').classList.contains('hidden')) return; // 이미 다른 화면으로 넘어감
+    el.className = 'aiLine';
+    el.textContent = '🤖 ' + comment;
+  } catch {
+    if (token === endAiToken) el.textContent = ''; // 실패하면 조용히 숨김
+  }
 }
 
 // ---------- 일시정지 ----------

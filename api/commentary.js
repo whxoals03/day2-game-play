@@ -1,4 +1,5 @@
 // Vercel Function (Web Handler): POST /api/commentary
+// 3D 오목, 몬스터 디펜스가 같이 쓰는 "AI 한 줄 해설" 함수입니다.
 // 비밀 키는 서버 환경변수 OPENROUTER_API_KEY 에서만 읽습니다. 브라우저로는 절대 나가지 않습니다.
 
 const MODELS = [
@@ -10,13 +11,49 @@ const MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
 ].filter(Boolean);
 
-const WINNERS = { black: '흑', white: '백', draw: '무승부' };
-const MODES = { pvp: '2인 대전', ai: 'AI 대전' };
-const MAX_MOVES = 225; // 15 x 15
 const DEADLINE_MS = 18000; // 모든 모델 시도에 쓸 수 있는 전체 시간
 
 export const config = { maxDuration: 25 };
 
+// ---------- 게임별 입력 검증 + 프롬프트 ----------
+// 사용자가 보낸 글을 프롬프트에 그대로 넣지 않고, 정해진 값만 골라 직접 문장을 만듭니다.
+
+const OMOK = {
+  system: '너는 오목 경기 해설가다. 경기 결과를 보고 재치 있는 해설을 한국어 딱 한 문장(60자 이내)으로만 말한다. 결과를 평가하거나 분석하지 말고, 따옴표, 줄바꿈, 설명은 쓰지 않는다.',
+  describe(data) {
+    const winners = { black: '흑', white: '백', draw: '무승부' };
+    const modes = { pvp: '2인 대전', ai: 'AI 대전' };
+    const winner = winners[data?.winner];
+    const mode = modes[data?.mode] ?? modes.ai;
+    const moves = Number(data?.totalMoves);
+    if (!winner || !Number.isInteger(moves) || moves < 1 || moves > 225) return null; // 15 x 15
+    return data.winner === 'draw'
+      ? `${mode}에서 판이 가득 차 총 ${moves}수 만에 무승부로 끝났다.`
+      : `${mode}에서 ${winner}이 총 ${moves}수 만에 승리했다.`;
+  },
+};
+
+const DEFENSE = {
+  system: '너는 몬스터 디펜스 게임 해설가다. 게임 결과를 보고 재치 있는 해설을 한국어 딱 한 문장(60자 이내)으로만 말한다. 결과를 평가하거나 분석하지 말고, 따옴표, 줄바꿈, 설명은 쓰지 않는다.',
+  describe(data) {
+    const levels = { easy: '쉬움', normal: '보통', hard: '어려움' };
+    const level = levels[data?.difficulty];
+    const wave = Number(data?.wave);
+    const totalWaves = Number(data?.totalWaves);
+    const score = Number(data?.score);
+    if (!level || !['win', 'lose'].includes(data?.result)) return null;
+    if (![5, 10, 15, 20].includes(totalWaves)) return null;
+    if (!Number.isInteger(wave) || wave < 1 || wave > totalWaves) return null;
+    if (!Number.isInteger(score) || score < 0 || score > 1_000_000) return null;
+    return data.result === 'win'
+      ? `난이도 ${level}에서 ${totalWaves}웨이브를 모두 막아 내 승리했다. 점수는 ${score}점이다.`
+      : `난이도 ${level}에서 ${totalWaves}웨이브 중 ${wave}웨이브에서 기지가 무너져 졌다. 점수는 ${score}점이다.`;
+  },
+};
+
+const GAMES = { omok: OMOK, defense: DEFENSE };
+
+// ---------- 도우미 ----------
 function json(body, status = 200) {
   return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 }
@@ -41,17 +78,10 @@ export async function POST(request) {
   let data;
   try { data = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
 
-  // 입력은 정해진 값만 받아서 직접 문장을 만듭니다 (사용자가 보낸 글을 프롬프트에 그대로 넣지 않음)
-  const winner = WINNERS[data?.winner];
-  const mode = MODES[data?.mode] ?? MODES.ai;
-  const moves = Number(data?.totalMoves);
-  if (!winner || !Number.isInteger(moves) || moves < 1 || moves > MAX_MOVES) {
-    return json({ error: 'bad_input' }, 400);
-  }
-
-  const resultText = data.winner === 'draw'
-    ? `${mode}에서 판이 가득 차 총 ${moves}수 만에 무승부로 끝났다.`
-    : `${mode}에서 ${winner}이 총 ${moves}수 만에 승리했다.`;
+  // game 값이 없으면 예전 오목 요청으로 봅니다 (이미 배포된 화면과 호환)
+  const game = GAMES[data?.game ?? 'omok'];
+  const resultText = game?.describe(data);
+  if (!resultText) return json({ error: 'bad_input' }, 400);
 
   const deadline = Date.now() + DEADLINE_MS;
   for (const model of MODELS) {
@@ -66,7 +96,7 @@ export async function POST(request) {
           max_tokens: 400, // 생각하는 모델은 답 전에 토큰을 쓰므로 넉넉히
           temperature: 0.8,
           messages: [
-            { role: 'system', content: '너는 오목 경기 해설가다. 경기 결과를 보고 재치 있는 해설을 한국어 딱 한 문장(60자 이내)으로만 말한다. 결과를 평가하거나 분석하지 말고, 따옴표, 줄바꿈, 설명은 쓰지 않는다.' },
+            { role: 'system', content: game.system },
             { role: 'user', content: resultText },
           ],
         }),
